@@ -137,6 +137,8 @@ jobs:
         run: |
           NAME="${{ steps.locate.outputs.ipa_name }}"
           PATCHED="${NAME}_zh.ipa"
+          REPO="${{ github.repository }}"
+          TAG="build-${{ github.run_number }}"
 
           echo "Splitting $PATCHED into 1.9 GB parts..."
           split -b 1900m "$PATCHED" "${PATCHED}.part-"
@@ -144,9 +146,33 @@ jobs:
           PARTS=(${PATCHED}.part-*)
           echo "Total parts: ${#PARTS[@]}"
 
+          RELEASE_ID=$(gh api repos/$REPO/releases/tags/$TAG --jq '.id')
+          echo "Release ID: $RELEASE_ID"
+
           for part in "${PARTS[@]}"; do
-            echo "Uploading $part ($(du -sh $part | cut -f1))..."
-            gh release upload "build-${{ github.run_number }}" "$part" --repo "${{ github.repository }}" --clobber
+            PART_NAME=$(basename "$part")
+            echo "=== Uploading $PART_NAME ($(du -sh $part | cut -f1)) ==="
+
+            # 強制刪除 release 中任何同名 asset（包含 pending 狀態）
+            gh api repos/$REPO/releases/$RELEASE_ID/assets \
+              --jq ".[] | select(.name==\"$PART_NAME\") | .id" \
+              | xargs -I{} gh api -X DELETE repos/$REPO/releases/$RELEASE_ID/assets/{} \
+              2>/dev/null || true
+
+            # 上傳，最多重試 3 次
+            for retry in 1 2 3; do
+              if gh release upload "$TAG" "$part" --repo "$REPO"; then
+                echo "Upload succeeded."
+                break
+              fi
+              echo "Upload failed (attempt $retry), retrying in 10s..."
+              sleep 10
+              # 再次清除可能殘留的 pending asset
+              gh api repos/$REPO/releases/$RELEASE_ID/assets \
+                --jq ".[] | select(.name==\"$PART_NAME\") | .id" \
+                | xargs -I{} gh api -X DELETE repos/$REPO/releases/$RELEASE_ID/assets/{} \
+                2>/dev/null || true
+            done
           done
 
           echo ""
