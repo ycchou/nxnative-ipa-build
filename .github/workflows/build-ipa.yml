@@ -37,7 +37,7 @@ jobs:
           mkdir -p game
           python3 -c "
           import gdown
-          gdown.download(id='${{ secrets.GAME_FILE_ID }}', output='game/game.xci', quiet=False)
+          gdown.download(id='${{ secrets.GAME_FILE_ID }}', output='game/The Great Ace Attorney Chronicles [0100D7F00FB1A000][v0][JP].xci', quiet=False)
           "
           ls -lh game/
 
