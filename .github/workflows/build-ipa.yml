@@ -22,9 +22,14 @@ jobs:
           brew install xcodegen zstd spirv-cross glslang
           brew install --cask dotnet-sdk
 
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
       - name: Install Python dependencies
         run: |
-          pip3 install --break-system-packages lz4 capstone fonttools "backports.zstd" gdown
+          pip install lz4 capstone fonttools "backports.zstd" gdown
 
       # ── 下載遊戲 XCI ──────────────────────────────────────────
       - name: Download game XCI from Google Drive
