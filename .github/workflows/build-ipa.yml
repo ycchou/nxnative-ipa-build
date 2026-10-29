@@ -58,8 +58,41 @@ jobs:
         run: |
           echo '${{ secrets.PROD_KEYS }}' | base64 --decode > prod.keys
 
-      # ── 建構 IPA（日文語言，補丁會替換日文文字檔）────────────────
-      - name: Build IPA
+      # ── 第一次建構：產生 provisional game.tsv ────────────────────
+      - name: Build IPA (first pass — generate provisional profile)
+        run: |
+          python3 scripts/build_ipa_from_nsp.py ./game -k prod.keys -l ja
+
+      # ── 修補 provisional game.tsv（修正黑屏問題）─────────────────
+      # JP 版 (0100D7F00FB1A000) 為 provisional profile，romfs_marker 指向
+      # 錯誤檔案 (CREDIT.mp4)，且缺少 tex_flush_upload / tex_dirty_upload。
+      # 需複製西方版 (010036E00FB20000) 的這 4 個 key。
+      # 參考：https://github.com/seedds/nxnative/issues/568
+      - name: Patch provisional game.tsv (fix black screen)
+        run: |
+          GAME_TSV="./game/0100D7F00FB1A000_build/profile/0100D7F00FB1A000/game.tsv"
+          if [ ! -f "$GAME_TSV" ]; then
+            echo "ERROR: provisional game.tsv not found!"
+            find ./game -name "game.tsv" 2>/dev/null || true
+            exit 1
+          fi
+          echo "=== Before patch ==="
+          cat "$GAME_TSV"
+
+          # 移除舊的（可能錯誤的）key，再加入正確值
+          for key in romfs_marker tex_flush_upload tex_dirty_upload depth_mode; do
+            sed -i "/^${key}	/d" "$GAME_TSV"
+          done
+          printf "romfs_marker\tnativeNXx64/sa/NX_64/root.arc\n" >> "$GAME_TSV"
+          printf "tex_flush_upload\ton\n"                         >> "$GAME_TSV"
+          printf "tex_dirty_upload\ton\n"                         >> "$GAME_TSV"
+          printf "depth_mode\tzero\n"                             >> "$GAME_TSV"
+
+          echo "=== After patch ==="
+          cat "$GAME_TSV"
+
+      # ── 第二次建構：重用已修補的 game.tsv，重建正確 IPA ─────────────
+      - name: Build IPA (second pass — with patched game.tsv)
         run: |
           python3 scripts/build_ipa_from_nsp.py ./game -k prod.keys -l ja
 
