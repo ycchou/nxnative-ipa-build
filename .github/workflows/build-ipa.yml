@@ -19,6 +19,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: seedds/nxnative
+          ref: 37c7eaa81decc69c247171359e5318df915944b4  # last commit before broken iOS 27 DmGamepad.m (cca333361d)
 
       - name: Install Homebrew dependencies
         run: |
