@@ -61,7 +61,7 @@ jobs:
       # ── 第一次建構：產生 provisional game.tsv ────────────────────
       - name: Build IPA (first pass — generate provisional profile)
         run: |
-          python3 scripts/build_ipa_from_nsp.py ./game -k prod.keys -l ja
+          python3 scripts/build_ipa_from_nsp.py ./game -k prod.keys -l ja --allow-other-metal
 
       # ── 修補 provisional game.tsv（修正黑屏問題）─────────────────
       # JP 版 (0100D7F00FB1A000) 為 provisional profile，romfs_marker 指向
@@ -94,7 +94,7 @@ jobs:
       # ── 第二次建構：重用已修補的 game.tsv，重建正確 IPA ─────────────
       - name: Build IPA (second pass — with patched game.tsv)
         run: |
-          python3 scripts/build_ipa_from_nsp.py ./game -k prod.keys -l ja
+          python3 scripts/build_ipa_from_nsp.py ./game -k prod.keys -l ja --allow-other-metal
 
       # ── 找到 IPA ───────────────────────────────────────────────
       - name: Locate IPA
