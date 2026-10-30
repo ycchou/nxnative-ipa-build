@@ -89,7 +89,7 @@ jobs:
 
           # 移除舊的（可能錯誤的）key，再加入正確值
           for key in romfs_marker tex_flush_upload tex_dirty_upload depth_mode; do
-            sed -i "/^${key}	/d" "$GAME_TSV"
+            sed -i '' "/^${key}	/d" "$GAME_TSV"
           done
           printf "romfs_marker\tnativeNXx64/sa/NX_64/root.arc\n" >> "$GAME_TSV"
           printf "tex_flush_upload\ton\n"                         >> "$GAME_TSV"
