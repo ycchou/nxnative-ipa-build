@@ -19,6 +19,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: seedds/nxnative
+          ref: ed7c473b67dd4d542e9f7a74bc8badea2315b2a4  # shaders OK with Metal 32023.883; patch DmGamepad.m below
 
       # ── 修補 DmGamepad.m（移除 iOS 27 SDK 才有的 deviceMotionBody）────
       - name: Patch DmGamepad.m (remove iOS 27 deviceMotionBody)
