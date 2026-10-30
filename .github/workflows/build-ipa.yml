@@ -19,7 +19,13 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: seedds/nxnative
-          ref: cf3ec56351e06481aafb924c43f7ae73251e6b4c  # last commit before broken iOS 27 DmGamepad.m; includes shader isolation fix (4eeac03a)
+
+      # ── 修補 DmGamepad.m（移除 iOS 27 SDK 才有的 deviceMotionBody）────
+      - name: Patch DmGamepad.m (remove iOS 27 deviceMotionBody)
+        run: |
+          sed -i '/deviceMotionBody/d' dm/ios/Sources/DmGamepad.m
+          echo "=== Patched DmGamepad.m (line removed if present) ==="
+          grep -n "deviceMotion" dm/ios/Sources/DmGamepad.m || true
 
       - name: Install Homebrew dependencies
         run: |
