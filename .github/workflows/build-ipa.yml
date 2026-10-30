@@ -30,7 +30,7 @@ jobs:
 
       - name: Install Homebrew dependencies
         run: |
-          brew install xcodegen zstd spirv-cross glslang
+          brew install xcodegen zstd spirv-cross glslang unar
           brew install --cask dotnet-sdk
 
       - name: Set up Python 3.13
@@ -99,8 +99,44 @@ jobs:
           echo "=== After patch ==="
           cat "$GAME_TSV"
 
-      # ── 第二次建構：重用已修補的 game.tsv，重建正確 IPA ─────────────
-      - name: Build IPA (second pass — with patched game.tsv)
+      # ── 把漢化補丁注入已解壓的 romfs 目錄（必須在第二次 build 前）───
+      # romfs_locate() 會用 romfs.img 作為唯一資料來源；若把補丁放進 IPA 的
+      # romfs/ 目錄，app 根本不會讀。正確做法是在 nxnative 打包 romfs.img
+      # 之前，把中文檔案覆寫進已解壓的 romfs 目錄，讓第二次 build 把它打包進去。
+      - name: Apply Chinese patch to extracted romfs (before romfs.img rebuild)
+        run: |
+          # 解壓漢化補丁 RAR
+          unar -o patch_extracted patch.rar
+          PATCH_ROMFS=$(find patch_extracted -type d -name "romfs" | head -1)
+          if [ -z "$PATCH_ROMFS" ]; then
+            echo "ERROR: 找不到補丁的 romfs 資料夾"
+            find patch_extracted -type d
+            exit 1
+          fi
+          echo "補丁來源: $PATCH_ROMFS"
+          ls "$PATCH_ROMFS/" | head -20
+
+          # 找第一次 build 解壓出來的 romfs 目錄（排除 profile/ 子目錄）
+          BUILD_ROMFS=$(find ./game -type d -name "romfs" ! -path "*/profile/*" | head -1)
+          if [ -z "$BUILD_ROMFS" ]; then
+            echo "=== 建構目錄結構 ==="
+            find ./game -maxdepth 4 -type d
+            echo "ERROR: 找不到 build romfs 目錄，請看上面的目錄結構"
+            exit 1
+          fi
+          echo "Build romfs: $BUILD_ROMFS"
+          echo "現有檔案數: $(find "$BUILD_ROMFS" -type f | wc -l)"
+
+          # 把中文檔案覆寫進 build romfs
+          rsync -av "$PATCH_ROMFS/" "$BUILD_ROMFS/"
+          echo "=== 套用後檔案數: $(find "$BUILD_ROMFS" -type f | wc -l) ==="
+
+          # 刪除舊的 romfs.img，強制第二次 build 重新從補丁後的目錄打包
+          find ./game -name "romfs.img" -delete
+          echo "已刪除舊的 romfs.img（第二次 build 將重建）"
+
+      # ── 第二次建構：用修補後的 game.tsv + 含中文的 romfs 重建 IPA ──
+      - name: Build IPA (second pass — patched game.tsv + Chinese romfs)
         run: |
           python3 scripts/build_ipa_from_nsp.py ./game -k prod.keys -l ja --allow-other-metal
 
@@ -115,50 +151,12 @@ jobs:
           echo "ipa_basename=$(basename $IPA)" >> $GITHUB_OUTPUT
           ls -lh "$IPA"
 
-      # ── 解壓補丁並應用到 IPA ───────────────────────────────────
-      - name: Apply Chinese patch to IPA
+      # ── 重命名 IPA（中文已在 romfs.img 內，直接標記 _zh）────────────
+      - name: Rename IPA to _zh
         run: |
           IPA="${{ steps.locate.outputs.ipa_path }}"
           NAME="${{ steps.locate.outputs.ipa_name }}"
-
-          echo "=== Extracting IPA ==="
-          mkdir -p ipa_work
-          unzip -q "$IPA" -d ipa_work
-
-          echo "=== App bundle structure ==="
-          ls ipa_work/Payload/
-
-          APP=$(find ipa_work/Payload -name "*.app" -maxdepth 1 | head -1)
-          echo "App bundle: $APP"
-          ls "$APP/" | head -20
-
-          echo "=== Extracting Chinese patch RAR ==="
-          mkdir -p patch_extracted
-
-          # 用 unar 或 unrar 解 RAR（macOS runner 有 unar）
-          if command -v unar &>/dev/null; then
-            unar -o patch_extracted patch.rar
-          else
-            brew install unar
-            unar -o patch_extracted patch.rar
-          fi
-
-          # 找補丁的 romfs 資料夾
-          PATCH_ROMFS=$(find patch_extracted -type d -name "romfs" | head -1)
-          echo "Patch romfs: $PATCH_ROMFS"
-          ls "$PATCH_ROMFS/"
-
-          echo "=== Applying patch files to IPA ==="
-          # 確保目標 romfs 存在
-          mkdir -p "$APP/romfs"
-          # 覆蓋補丁檔案（保留 IPA 中原有的其他檔案）
-          rsync -av "$PATCH_ROMFS/" "$APP/romfs/"
-
-          echo "=== Repacking patched IPA ==="
-          cd ipa_work
-          zip -r -9 "../${NAME}_zh.ipa" . > /dev/null
-          cd ..
-
+          cp "$IPA" "${NAME}_zh.ipa"
           ls -lh "${NAME}_zh.ipa"
           echo "patched_ipa=${NAME}_zh.ipa" >> $GITHUB_ENV
 
