@@ -23,7 +23,7 @@ jobs:
       # ── 修補 DmGamepad.m（移除 iOS 27 SDK 才有的 deviceMotionBody）────
       - name: Patch DmGamepad.m (remove iOS 27 deviceMotionBody)
         run: |
-          sed -i '/deviceMotionBody/d' dm/ios/Sources/DmGamepad.m
+          sed -i '' '/deviceMotionBody/d' dm/ios/Sources/DmGamepad.m
           echo "=== Patched DmGamepad.m (line removed if present) ==="
           grep -n "deviceMotion" dm/ios/Sources/DmGamepad.m || true
 
