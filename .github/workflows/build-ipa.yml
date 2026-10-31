@@ -105,13 +105,17 @@ jobs:
           echo "=== After patch ==="
           cat "$GAME_TSV"
 
-      # ── 把漢化補丁注入已解壓的 romfs 目錄（必須在第二次 build 前）───
-      # romfs_locate() 會用 romfs.img 作為唯一資料來源；若把補丁放進 IPA 的
-      # romfs/ 目錄，app 根本不會讀。正確做法是在 nxnative 打包 romfs.img
-      # 之前，把中文檔案覆寫進已解壓的 romfs 目錄，讓第二次 build 把它打包進去。
-      - name: Apply Chinese patch to extracted romfs (before romfs.img rebuild)
+      # ── 把漢化補丁注入 RomFS.img（解壓→套用→重打包）────────────────
+      # nx_extract 直接從 XCI 建立 RomFS.img，沒有中間的 loose-files 目錄。
+      # romfs_locate() 以 RomFS.img 為唯一資料來源，loose romfs/ 目錄完全無效。
+      # 正確做法：
+      #   1. 用 romfs_image.read_index() 把 RomFS.img 解壓成 RomFS/ 資料夾
+      #   2. 用 rsync 把中文補丁覆寫進 RomFS/
+      #   3. 用 romfs_image.pack() 從 RomFS/ 重建 RomFS.img（覆寫原檔）
+      #   4. 第二次 build 直接使用已含中文的 RomFS.img
+      - name: Apply Chinese patch to RomFS.img (extract, patch, repack)
         run: |
-          # 解壓漢化補丁 RAR
+          # Step 1: 解壓漢化補丁 RAR
           unar -o patch_extracted patch.rar
           PATCH_ROMFS=$(find patch_extracted -type d -name "romfs" | head -1)
           if [ -z "$PATCH_ROMFS" ]; then
@@ -119,28 +123,84 @@ jobs:
             find patch_extracted -type d
             exit 1
           fi
-          echo "補丁來源: $PATCH_ROMFS"
-          ls "$PATCH_ROMFS/" | head -20
+          echo "補丁來源: $PATCH_ROMFS ($(find "$PATCH_ROMFS" -type f | wc -l) 個檔案)"
 
-          # nxnative 把解壓的遊戲 romfs 存在 extract/v0/ 目錄
-          # 第二次 build 時會 reuse 這個目錄來重建 romfs.img
-          BUILD_ROMFS=$(find ./game -type d -path "*/extract/v0" | head -1)
-          if [ -z "$BUILD_ROMFS" ]; then
-            echo "=== 建構目錄結構（找不到 extract/v0，列出所有目錄） ==="
-            find ./game -maxdepth 5 -type d
-            echo "ERROR: 找不到 extract/v0 目錄"
+          # Step 2: 找到 RomFS.img（-iname 不分大小寫，避免大小寫陷阱）
+          ROMFS_IMG=$(find ./game -iname "romfs.img" | head -1)
+          if [ -z "$ROMFS_IMG" ]; then
+            echo "ERROR: 找不到 RomFS.img！"
+            find ./game -name "*.img" -maxdepth 8 2>/dev/null | head -20 || true
             exit 1
           fi
-          echo "Build romfs: $BUILD_ROMFS"
-          echo "現有檔案數: $(find "$BUILD_ROMFS" -type f | wc -l)"
+          echo "=== RomFS.img: $ROMFS_IMG ($(ls -lh "$ROMFS_IMG" | awk '{print $5}')) ==="
 
-          # 把中文檔案覆寫進 build romfs
-          rsync -av "$PATCH_ROMFS/" "$BUILD_ROMFS/"
-          echo "=== 套用後檔案數: $(find "$BUILD_ROMFS" -type f | wc -l) ==="
+          # Step 3: 解壓 RomFS.img → RomFS/ 資料夾
+          ROMFS_DIR="$(dirname "$ROMFS_IMG")/RomFS"
+          export ROMFS_IMG ROMFS_DIR
 
-          # 刪除舊的 romfs.img，強制第二次 build 重新從補丁後的目錄打包
-          find ./game -name "romfs.img" -delete
-          echo "已刪除舊的 romfs.img（第二次 build 將重建）"
+          cat > /tmp/extract_romfs.py << 'PYEOF'
+import sys, os
+sys.path.insert(0, 'dm/tools')
+import romfs_image
+
+img_path = os.environ['ROMFS_IMG']
+out_dir  = os.environ['ROMFS_DIR']
+os.makedirs(out_dir, exist_ok=True)
+
+index = romfs_image.read_index(img_path)
+dirs  = [(p, m) for p, m in index.items() if m[0]]
+files = [(p, m) for p, m in index.items() if not m[0]]
+print(f'Index: {len(index)} entries ({len(dirs)} dirs, {len(files)} files)')
+
+with open(img_path, 'rb') as f:
+    for guest_path, _ in dirs:
+        os.makedirs(os.path.join(out_dir, guest_path), exist_ok=True)
+    count = 0
+    for guest_path, (_, offset, size) in files:
+        out_path = os.path.join(out_dir, guest_path)
+        parent   = os.path.dirname(out_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        f.seek(offset)
+        remaining = size
+        with open(out_path, 'wb') as out_f:
+            while remaining > 0:
+                chunk = f.read(min(remaining, 8 << 20))
+                if not chunk: break
+                out_f.write(chunk)
+                remaining -= len(chunk)
+        count += 1
+        if count % 1000 == 0:
+            print(f'  Extracted {count}/{len(files)}...')
+print(f'解壓完成: {count} 個檔案 → {out_dir}')
+PYEOF
+
+          echo "=== 解壓 RomFS.img → $ROMFS_DIR ==="
+          python3 /tmp/extract_romfs.py
+          echo "解壓後檔案數: $(find "$ROMFS_DIR" -type f | wc -l)"
+
+          # Step 4: 套用中文補丁（覆寫 RomFS/ 裡對應的日文檔案）
+          echo "=== 套用中文補丁 ==="
+          rsync -a "$PATCH_ROMFS/" "$ROMFS_DIR/"
+          echo "套用後檔案數: $(find "$ROMFS_DIR" -type f | wc -l)"
+
+          # Step 5: 從含中文的 RomFS/ 重打包 RomFS.img（覆寫原檔，自動更新 stamp）
+          cat > /tmp/pack_romfs.py << 'PYEOF'
+import sys, os
+sys.path.insert(0, 'dm/tools')
+import romfs_image
+
+src = os.environ['ROMFS_DIR']
+dst = os.environ['ROMFS_IMG']
+print(f'打包: {src} → {dst}')
+n = romfs_image.pack(src, dst)
+print(f'完成: {n} entries, {os.path.getsize(dst):,} bytes')
+PYEOF
+
+          echo "=== 重打包 RomFS.img ==="
+          python3 /tmp/pack_romfs.py
+          echo "=== 重建後 RomFS.img: $(ls -lh "$ROMFS_IMG") ==="
+          echo "=== RomFS/ 保留（$(find "$ROMFS_DIR" -type f | wc -l) 個檔案，含中文）==="
 
       # ── 第二次建構：用修補後的 game.tsv + 含中文的 romfs 重建 IPA ──
       - name: Build IPA (second pass — patched game.tsv + Chinese romfs)
