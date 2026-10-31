@@ -42,15 +42,21 @@ jobs:
         run: |
           pip install lz4 capstone fonttools "backports.zstd" gdown
 
-      # ── 下載遊戲 XCI ──────────────────────────────────────────
-      - name: Download game XCI from Google Drive
+      # ── 下載遊戲 XCI（從 GitHub Release，速度遠快於 Google Drive）──
+      - name: Download game XCI from GitHub Release
         run: |
           mkdir -p game
-          python3 -c "
-          import gdown
-          gdown.download(id='${{ secrets.GAME_FILE_ID }}', output='game/The Great Ace Attorney Chronicles [0100D7F00FB1A000][v0][JP].xci', quiet=False)
-          "
+          XCI_NAME="The Great Ace Attorney Chronicles [0100D7F00FB1A000][v0][JP].xci"
+          gh release download xci-source \
+            --repo "${{ github.repository }}" \
+            --pattern "game.xci.part-*" \
+            --dir game/
+          echo "合併分片..."
+          cat game/game.xci.part-aa game/game.xci.part-ab game/game.xci.part-ac > "game/$XCI_NAME"
+          rm game/game.xci.part-*
           ls -lh game/
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # ── 下載漢化補丁 RAR ────────────────────────────────────────
       - name: Download Chinese patch RAR from Google Drive
