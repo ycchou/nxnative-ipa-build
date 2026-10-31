@@ -116,12 +116,13 @@ jobs:
           echo "補丁來源: $PATCH_ROMFS"
           ls "$PATCH_ROMFS/" | head -20
 
-          # nxnative 把解壓的遊戲 romfs 存在 patched_v0/ 目錄
-          BUILD_ROMFS=$(find ./game -maxdepth 3 -type d -name "patched_v0" | head -1)
+          # nxnative 把解壓的遊戲 romfs 存在 extract/v0/ 目錄
+          # 第二次 build 時會 reuse 這個目錄來重建 romfs.img
+          BUILD_ROMFS=$(find ./game -type d -path "*/extract/v0" | head -1)
           if [ -z "$BUILD_ROMFS" ]; then
-            echo "=== 建構目錄結構（找不到 patched_v0，列出所有目錄） ==="
+            echo "=== 建構目錄結構（找不到 extract/v0，列出所有目錄） ==="
             find ./game -maxdepth 5 -type d
-            echo "ERROR: 找不到 patched_v0 目錄"
+            echo "ERROR: 找不到 extract/v0 目錄"
             exit 1
           fi
           echo "Build romfs: $BUILD_ROMFS"
