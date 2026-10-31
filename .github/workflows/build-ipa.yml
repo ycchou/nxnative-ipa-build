@@ -139,41 +139,41 @@ jobs:
           export ROMFS_IMG ROMFS_DIR
 
           cat > /tmp/extract_romfs.py << 'PYEOF'
-import sys, os
-sys.path.insert(0, 'dm/tools')
-import romfs_image
+          import sys, os
+          sys.path.insert(0, 'dm/tools')
+          import romfs_image
 
-img_path = os.environ['ROMFS_IMG']
-out_dir  = os.environ['ROMFS_DIR']
-os.makedirs(out_dir, exist_ok=True)
+          img_path = os.environ['ROMFS_IMG']
+          out_dir  = os.environ['ROMFS_DIR']
+          os.makedirs(out_dir, exist_ok=True)
 
-index = romfs_image.read_index(img_path)
-dirs  = [(p, m) for p, m in index.items() if m[0]]
-files = [(p, m) for p, m in index.items() if not m[0]]
-print(f'Index: {len(index)} entries ({len(dirs)} dirs, {len(files)} files)')
+          index = romfs_image.read_index(img_path)
+          dirs  = [(p, m) for p, m in index.items() if m[0]]
+          files = [(p, m) for p, m in index.items() if not m[0]]
+          print(f'Index: {len(index)} entries ({len(dirs)} dirs, {len(files)} files)')
 
-with open(img_path, 'rb') as f:
-    for guest_path, _ in dirs:
-        os.makedirs(os.path.join(out_dir, guest_path), exist_ok=True)
-    count = 0
-    for guest_path, (_, offset, size) in files:
-        out_path = os.path.join(out_dir, guest_path)
-        parent   = os.path.dirname(out_path)
-        if parent:
-            os.makedirs(parent, exist_ok=True)
-        f.seek(offset)
-        remaining = size
-        with open(out_path, 'wb') as out_f:
-            while remaining > 0:
-                chunk = f.read(min(remaining, 8 << 20))
-                if not chunk: break
-                out_f.write(chunk)
-                remaining -= len(chunk)
-        count += 1
-        if count % 1000 == 0:
-            print(f'  Extracted {count}/{len(files)}...')
-print(f'解壓完成: {count} 個檔案 → {out_dir}')
-PYEOF
+          with open(img_path, 'rb') as f:
+              for guest_path, _ in dirs:
+                  os.makedirs(os.path.join(out_dir, guest_path), exist_ok=True)
+              count = 0
+              for guest_path, (_, offset, size) in files:
+                  out_path = os.path.join(out_dir, guest_path)
+                  parent   = os.path.dirname(out_path)
+                  if parent:
+                      os.makedirs(parent, exist_ok=True)
+                  f.seek(offset)
+                  remaining = size
+                  with open(out_path, 'wb') as out_f:
+                      while remaining > 0:
+                          chunk = f.read(min(remaining, 8 << 20))
+                          if not chunk: break
+                          out_f.write(chunk)
+                          remaining -= len(chunk)
+                  count += 1
+                  if count % 1000 == 0:
+                      print(f'  Extracted {count}/{len(files)}...')
+          print(f'解壓完成: {count} 個檔案 → {out_dir}')
+          PYEOF
 
           echo "=== 解壓 RomFS.img → $ROMFS_DIR ==="
           python3 /tmp/extract_romfs.py
@@ -186,16 +186,16 @@ PYEOF
 
           # Step 5: 從含中文的 RomFS/ 重打包 RomFS.img（覆寫原檔，自動更新 stamp）
           cat > /tmp/pack_romfs.py << 'PYEOF'
-import sys, os
-sys.path.insert(0, 'dm/tools')
-import romfs_image
+          import sys, os
+          sys.path.insert(0, 'dm/tools')
+          import romfs_image
 
-src = os.environ['ROMFS_DIR']
-dst = os.environ['ROMFS_IMG']
-print(f'打包: {src} → {dst}')
-n = romfs_image.pack(src, dst)
-print(f'完成: {n} entries, {os.path.getsize(dst):,} bytes')
-PYEOF
+          src = os.environ['ROMFS_DIR']
+          dst = os.environ['ROMFS_IMG']
+          print(f'打包: {src} → {dst}')
+          n = romfs_image.pack(src, dst)
+          print(f'完成: {n} entries, {os.path.getsize(dst):,} bytes')
+          PYEOF
 
           echo "=== 重打包 RomFS.img ==="
           python3 /tmp/pack_romfs.py
