@@ -1,0 +1,161 @@
+name: Build nxnative IPA (Mario Kart 8 Deluxe)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Check disk space
+        run: df -h /
+
+      - name: Checkout nxnative
+        uses: actions/checkout@v4
+        with:
+          repository: seedds/nxnative
+          ref: ed7c473b67dd4d542e9f7a74bc8badea2315b2a4
+
+      # ── 修補 DmGamepad.m（移除 iOS 27 SDK 才有的 deviceMotionBody）────
+      - name: Patch DmGamepad.m (remove iOS 27 deviceMotionBody)
+        run: |
+          sed -i '' '/deviceMotionBody/d' dm/ios/Sources/DmGamepad.m
+
+      - name: Install Homebrew dependencies
+        run: |
+          brew install xcodegen zstd spirv-cross glslang unar
+          brew install --cask dotnet-sdk
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install Python dependencies
+        run: |
+          pip install lz4 capstone fonttools "backports.zstd"
+
+      # ── 下載 MK8D NSP（base + update + DLC）從 GitHub Release ──────
+      - name: Download MK8D NSPs from GitHub Release
+        run: |
+          mkdir -p game
+
+          # Base game NSP (4 parts → merge)
+          gh release download mk8d-source \
+            --repo "${{ github.repository }}" \
+            --pattern "base.nsp.part-*" \
+            --dir game/
+          cat game/base.nsp.part-aa \
+              game/base.nsp.part-ab \
+              game/base.nsp.part-ac \
+              game/base.nsp.part-ad \
+            > "game/Mario Kart 8 Deluxe [0100152000022000][v0].nsp"
+          rm game/base.nsp.part-*
+
+          # Update NSP v3.0.5 (3 parts → merge)
+          gh release download mk8d-source \
+            --repo "${{ github.repository }}" \
+            --pattern "update.nsp.part-*" \
+            --dir game/
+          cat game/update.nsp.part-aa \
+              game/update.nsp.part-ab \
+              game/update.nsp.part-ac \
+            > "game/Mario Kart 8 Deluxe [0100152000022800][v1376256][US][Update v3.0.5].nsp"
+          rm game/update.nsp.part-*
+
+          # DLC Booster Course Pass (tiny, direct download)
+          gh release download mk8d-source \
+            --repo "${{ github.repository }}" \
+            --pattern "dlc.nsp" \
+            --dir game/
+          mv game/dlc.nsp "game/Mario Kart 8 Deluxe [DLC Booster Course Pass] [0100152000023001][v65536].nsp"
+
+          echo "=== Game directory ==="
+          ls -lh game/
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 寫入 prod.keys ────────────────────────────────────────────
+      - name: Write prod.keys
+        run: |
+          echo '${{ secrets.PROD_KEYS }}' | base64 --decode > prod.keys
+
+      # ── 建構 IPA（base + update v3.0.5 + DLC）────────────────────
+      # scan_nsps() 會自動掃描 game/ 目錄，依 title ID 識別 base/update/dlc
+      - name: Build IPA (base + update + DLC)
+        run: |
+          python3 scripts/build_ipa_from_nsp.py ./game -k prod.keys -l en --allow-other-metal
+
+      # ── 找到 IPA ─────────────────────────────────────────────────
+      - name: Locate IPA
+        id: locate
+        run: |
+          IPA=$(find ./game -name "*.ipa" | head -1)
+          NAME=$(basename "$IPA" .ipa)
+          echo "ipa_path=$IPA" >> $GITHUB_OUTPUT
+          echo "ipa_name=$NAME" >> $GITHUB_OUTPUT
+          ls -lh "$IPA"
+
+      # ── 重命名 IPA ───────────────────────────────────────────────
+      - name: Rename IPA
+        run: |
+          IPA="${{ steps.locate.outputs.ipa_path }}"
+          NAME="${{ steps.locate.outputs.ipa_name }}"
+          cp "$IPA" "${NAME}_v3.0.5_dlc.ipa"
+          ls -lh "${NAME}_v3.0.5_dlc.ipa"
+          echo "final_ipa=${NAME}_v3.0.5_dlc.ipa" >> $GITHUB_ENV
+
+      # ── 建立 GitHub Release ──────────────────────────────────────
+      - name: Create GitHub Release
+        run: |
+          gh release create "mk8d-build-${{ github.run_number }}" \
+            --repo "${{ github.repository }}" \
+            --title "MK8D IPA Build #${{ github.run_number }} (v3.0.5 + DLC)" \
+            --notes "Mario Kart 8 Deluxe — Update v3.0.5 + Booster Course Pass DLC" \
+            --prerelease
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 切割並上傳 IPA ───────────────────────────────────────────
+      - name: Split and upload IPA
+        run: |
+          NAME="${{ steps.locate.outputs.ipa_name }}"
+          FINAL="${NAME}_v3.0.5_dlc.ipa"
+          REPO="${{ github.repository }}"
+          TAG="mk8d-build-${{ github.run_number }}"
+
+          echo "Splitting $FINAL into 1.9 GB parts..."
+          split -b 1900m "$FINAL" "${FINAL}.part-"
+
+          PARTS=(${FINAL}.part-*)
+          echo "Total parts: ${#PARTS[@]}"
+
+          RELEASE_ID=$(gh api repos/$REPO/releases/tags/$TAG --jq '.id')
+
+          for part in "${PARTS[@]}"; do
+            PART_NAME=$(basename "$part")
+            echo "=== Uploading $PART_NAME ($(du -sh $part | cut -f1)) ==="
+            gh api repos/$REPO/releases/$RELEASE_ID/assets \
+              --jq ".[] | select(.name==\"$PART_NAME\") | .id" \
+              | xargs -I{} gh api -X DELETE repos/$REPO/releases/$RELEASE_ID/assets/{} \
+              2>/dev/null || true
+            for retry in 1 2 3; do
+              if gh release upload "$TAG" "$part" --repo "$REPO"; then
+                echo "Upload succeeded."
+                break
+              fi
+              echo "Upload failed (attempt $retry), retrying in 10s..."
+              sleep 10
+              gh api repos/$REPO/releases/$RELEASE_ID/assets \
+                --jq ".[] | select(.name==\"$PART_NAME\") | .id" \
+                | xargs -I{} gh api -X DELETE repos/$REPO/releases/$RELEASE_ID/assets/{} \
+                2>/dev/null || true
+            done
+          done
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
